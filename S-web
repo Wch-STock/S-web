@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>上午≤-4%拉升·14:30翻红 监控</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;margin:0;background:#111;color:#eee;padding:12px}
+  h1{font-size:17px;margin:0 0 8px}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  button{background:#0a84ff;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px}
+  button.stop{background:#ff453a}
+  .meta{font-size:12px;color:#999}
+  .card{border:1px solid #333;border-radius:10px;padding:10px;margin:8px 0;background:#1c1c1e}
+  .red{color:#ff3b30}.green{color:#34c759}
+  .name{font-size:15px;font-weight:600}
+  .row{display:flex;justify-content:space-between;font-size:13px;margin-top:4px}
+  .log{font-size:11px;color:#666;margin-top:10px;max-height:120px;overflow:auto;white-space:pre-wrap}
+  input{flex:1;min-width:120px;background:#2c2c2e;color:#fff;border:0;border-radius:8px;padding:8px}
+</style>
+</head>
+<body>
+<h1>上午≤-4% → 上午翻红 → 14:30红</h1>
+<div class="bar">
+  <button id="start">开始监控</button>
+  <button id="stop" class="stop">停止</button>
+  <span class="meta" id="status">未启动</span>
+</div>
+<div class="bar">
+  <input id="codes" placeholder="补充代码用逗号分隔，如 sh600519,sz000001">
+  <button id="add">加入</button>
+</div>
+<div id="list"></div>
+<div class="log" id="log"></div>
+
+<script>
+// ====== 配置 ======
+// 默认盯几只做演示，自己加代码进 WATCH 即可（腾讯格式：sh600519 / sz000001）
+let WATCH = ["sh600519","sz000001","sz300750","sh601318"];
+
+const state = {};   // code -> {name, pre, amLow, p1130, p1430, hit}
+let timer = null;
+
+function log(t){const el=document.getElementById('log');el.textContent=(t+"\n"+el.textContent).slice(0,2000);}
+function nowHm(){const d=new Date();return d.getHours()*60+d.getMinutes();}
+
+// 腾讯接口 JSONP
+function fetchQuotes(codes){
+  return new Promise((resolve)=>{
+    const s=document.createElement('script');
+    const cb='_cb_'+Date.now();
+    window[cb]=function(){};
+    s.src=`https://qt.gtimg.cn/q=${codes.join(',')}&_t=${Date.now()}`;
+    s.onload=()=>{
+      const out={};
+      codes.forEach(c=>{
+        const v=window['v_'+c];
+        if(v){const f=v.split('~');out[c]={name:f[1],price:parseFloat(f[3]),pre:parseFloat(f[4]),low:parseFloat(f[34])};}
+      });
+      delete window[cb];
+      s.remove();
+      resolve(out);
+    };
+    s.onerror=()=>{log('批量拉取失败');resolve({});};
+    document.head.appendChild(s);
+  });
+}
+
+function ensureState(c,info){
+  if(!state[c]) state[c]={name:info.name,pre:info.pre,amLow:info.low,p1130:null,p1430:null,hit:false};
+  else{
+    state[c].name=info.name; state[c].pre=info.pre;
+    // 上午时段持续追踪最低价
+    if(nowHm()>=570 && nowHm()<=690){ // 9:30-11:30
+      if(!state[c].amLow || info.low<state[c].amLow) state[c].amLow=info.low;
+    }
+  }
+}
+
+function snapshot(){
+  const hm=nowHm();
+  fetchQuWords(WATCH).then(d=>{
+    for(const c in d){
+      const info=d[c];
+      ensureState(c,info);
+      const st=state[c];
+      // 锁 11:30 价
+      if(hm===690 && st.p1130===null) st.p1130=info.price;
+      // 锁 14:30 价
+      if(hm===870 && st.p1430===null) st.p1430=info.price;
+    }
+    render();
+  });
+}
+
+function render(){
+  const box=document.getElementById('list');box.innerHTML='';
+  for(const c in state){
+    const st=state[c];
+    if(!st.pre) continue;
+    const amLowPct=(st.amLow/st.pre-1)*100;
+    const hit = st.amLow<=st.pre*0.96 && st.p1130!=null && st.p1130>st.pre && st.p1430!=null && st.p1430>st.pre;
+    if(!hit) continue;
+    const div=document.createElement('div');div.className='card';
+    div.innerHTML=`<div class="name">${st.name} <span class="meta">${c}</span></div>
+      <div class="row"><span>上午最低</span><span class="${amLowPct<=-4?'red':'green'}">${amLowPct.toFixed(2)}%</span></div>
+      <div class="row"><span>11:30价</span><span class="${(st.p1130/st.pre-1)*100>=0?'red':'green'}">${(st.p1130/st.pre-1)*100.toFixed(2)}%</span></div>
+      <div class="row"><span>14:30价</span><span class="${(st.p1430/st.pre-1)*100>=0?'red':'green'}">${(st.p1430/st.pre-1)*100.toFixed(2)}%</span></div>`;
+    box.appendChild(div);
+  }
+  document.getElementById('status').textContent='监控中 · 命中 '+box.children.length+' 只 · '+new Date().toLocaleTimeString();
+}
+
+document.getElementById('start').onclick=()=>{
+  if(timer) return;
+  document.getElementById('status').textContent='启动…';
+  log('开始监控 '+WATCH.length+' 只');
+  snapshot();
+  timer=setInterval(snapshot,15000); // 15秒一轮
+};
+document.getElementById('stop').onclick=()=>{clearInterval(timer);timer=null;log('已停止');document.getElementById('status').textContent='已停止';};
+document.getElementById('add').onclick=()=>{
+  const v=document.getElementById('codes').value.trim();
+  if(v) WATCH=WATCH.concat(v.split(',').map(x=>x.trim()).filter(Boolean));
+  log('当前池子 '+WATCH.length+' 只');
+};
+// 别名容错
+function fetchQuWords(cs){return fetchQuotes(cs);}
+
+log('页面就绪。交易时段点“开始监控”，11:30/14:30 自动锁价。');
+</script>
+</body>
+</html>
