@@ -30,7 +30,7 @@
 </head>
 <body>
 <h2>📈 上午深跌 → 翻红监控</h2>
-<div class="sub">上午曾 ≤-4% 且当前翻红<br>覆盖沪深主板 + 创业板</div>
+<div class="sub">上午曾 ≤-4% 且当前翻红<br>仅沪深主板（排除创业板/科创板/北交所/ST）</div>
 
 <div class="bar">
   <div class="stat">扫描<b id="cnt">0</b></div>
@@ -39,7 +39,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯，无需代理。11:30 后可看"午盘确认"，14:30 后可看"最终命中"。</div>
+<div class="tip">✅ JSONP 直连腾讯，无需代理。排除 300/688/bj 开头及 ST 股票。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -49,12 +49,19 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
+// ============ 修改点1：只生成沪深主板代码，排除 300/688/bj ============
 function buildCodes() {
   const codes = [];
-  for (let i = 600000; i <= 605000; i++) codes.push('sh' + i);
-  for (let i = 1; i <= 999; i++) codes.push('sh688' + String(i).padStart(3,'0'));
-  for (let i = 1; i <= 2999; i++) codes.push('sz' + String(i).padStart(6,'0'));
-  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);
+  // 沪市主板：600xxx、601xxx、603xxx、605xxx（排除 688 科创板）
+  for (let i = 600000; i <= 605999; i++) {
+    const num = i;
+    if (num >= 688000 && num <= 688999) continue; // 排除科创板
+    codes.push('sh' + i);
+  }
+  // 深市主板：000xxx、001xxx、002xxx（排除 300/301 创业板）
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));       // 000xxx
+  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));   // 001xxx（如有）
+  for (let i = 2000; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));   // 002xxx
   return codes;
 }
 
@@ -68,6 +75,7 @@ function log(msg) {
   if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
 }
 
+// ============ 修改点2：解析时剔除 ST 股票 ============
 function fetchBatchJSONP(batch) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
@@ -81,9 +89,11 @@ function fetchBatchJSONP(batch) {
         if (!g || typeof g !== 'string') continue;
         const d = g.split('~');
         if (d.length < 35) continue;
+        const name = d[1] || '';
+        if (/ST/.test(name)) continue; // ★ 排除 ST / *ST 股票
         rows.push({
           code: c,
-          name: d[1],
+          name: name,
           price: parseFloat(d[3]),
           pre: parseFloat(d[4]),
           low: parseFloat(d[34]),
@@ -130,13 +140,10 @@ async function scanReal() {
         st.name = r.name; st.pre = r.pre;
         const pre = r.pre;
 
-        // 上午记录最低
         if (isAM) {
           st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
         }
-        // 11:30 记录
         if (t === 11*60+30 && st.p1130 == null) st.p1130 = r.price;
-        // 14:30 记录
         if (t === 14*60+30 && st.p1430 == null) st.p1430 = r.price;
 
         const amDropOk = st.amLow != null && st.amLow <= pre * (1 + DROP_PCT/100);
@@ -144,7 +151,6 @@ async function scanReal() {
         const p1130Red = st.p1130 != null && st.p1130 > pre;
         const p1430Red = st.p1430 != null && st.p1430 > pre;
 
-        // 最终命中：上午深跌 + 11:30红 + 14:30红
         if (amDropOk && p1130Red && p1430Red && !st.hit) {
           st.hit = true;
         }
@@ -152,7 +158,6 @@ async function scanReal() {
         if (st.hit) {
           hitList.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), p1130Pct: +((st.p1130/pre-1)*100).toFixed(2), p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
         } else if (amDropOk && nowRed) {
-          // 观察中：上午跌够了，当前红盘
           observing.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), curPct: +((r.price/pre-1)*100).toFixed(2), p1130: st.p1130, p1430: st.p1430 });
         }
       }
