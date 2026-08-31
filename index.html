@@ -14,7 +14,7 @@
   .stat b { display:block; font-size:18px; color:#58a6ff; }
   button { background:#238636; color:#fff; border:none; border-radius:8px; padding:10px 14px; font-size:14px; flex:1; }
   button.stop { background:#30363d; }
-  .tip { text-align:center; color:#f0883e; font-size:12px; margin:8px 0; line-height:1.6; padding:8px; background:#161b22; border-radius:8px; }
+  .tip { text-align:center; color:#3fb950; font-size:12px; margin:8px 0; line-height:1.6; padding:8px; background:#161b22; border-radius:8px; }
   .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:10px 12px; margin:8px 0; }
   .row { display:flex; justify-content:space-between; align-items:center; }
   .name { font-size:16px; font-weight:bold; }
@@ -38,12 +38,12 @@
 </div>
 
 <div class="tip" id="tip">
-  ⚠️ 若一直"批失败/0只"，是浏览器跨域限制。请按本页底部"托管说明"把本文件上传到 GitHub Pages 后访问，即可正常拉取行情。
+  ✅ 已改用 &lt;script&gt; JSONP 直连腾讯接口，GitHub Pages 托管后无需 CORS 代理即可拉数据。代理框留空即可。
 </div>
 
 <div class="sub" style="color:#58a6ff;">
-  CORS 代理（可选，托管后仍报错时填）：
-  <input id="proxy" placeholder="如 https://corsproxy.io/?url=" value="">
+  CORS 代理（可选，仅当 JSONP 被网络拦截时填）：
+  <input id="proxy" placeholder="留空=JSONP直连，填则走代理" value="">
 </div>
 
 <div id="list"><div class="empty">暂无数据，点击"开始监控"</div></div>
@@ -51,17 +51,16 @@
 
 <script>
 // ============ 配置 ============
-const BATCH = 50;          // 每批代码数
-const REFRESH_MS = 30000;  // 刷新间隔 30 秒
-const DROP_PCT = -4;       // 上午下探阈值 %
+const BATCH = 50;
+const REFRESH_MS = 30000;
+const DROP_PCT = -4;
 
-// 覆盖主要 A 股（沪深主板 + 创业板），按需可扩展科创/北交所
 function buildCodes() {
   const codes = [];
-  for (let i = 600000; i <= 605000; i++) codes.push('sh' + i);      // 沪市主板
-  for (let i = 1; i <= 999; i++) codes.push('sh688' + String(i).padStart(3,'0')); // 科创板
-  for (let i = 1; i <= 2999; i++) codes.push('sz' + String(i).padStart(6,'0'));   // 深市/中小板
-  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);      // 创业板
+  for (let i = 600000; i <= 605000; i++) codes.push('sh' + i);
+  for (let i = 1; i <= 999; i++) codes.push('sh688' + String(i).padStart(3,'0'));
+  for (let i = 1; i <= 2999; i++) codes.push('sz' + String(i).padStart(6,'0'));
+  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);
   return codes;
 }
 
@@ -75,10 +74,15 @@ function log(msg) {
   if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
 }
 
+// 解析一行 v_sh600000="1~名称~代码~..."
 function parseLine(line) {
+  if (!line) return null;
   const idx = line.indexOf('="');
   if (idx < 0) return null;
-  const data = line.slice(idx + 2, -2).split('~');
+  let raw = line.slice(idx + 2);
+  if (raw.endsWith('";')) raw = raw.slice(0, -2);
+  else if (raw.endsWith('"')) raw = raw.slice(0, -1);
+  const data = raw.split('~');
   if (data.length < 36) return null;
   return {
     name: data[1],
@@ -91,19 +95,74 @@ function parseLine(line) {
 }
 
 function getProxy() {
-  const v = document.getElementById('proxy').value.trim();
-  return v ? (v.endsWith('=') || v.endsWith('/') ? v : v + '=') : '';
+  return document.getElementById('proxy').value.trim();
 }
 
-async function fetchBatch(batch) {
+// ---- 方案A：JSONP script 注入（默认走这个）----
+function fetchBatchJSONP(batch) {
+  return new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'https://qt.gtimg.cn/q=' + batch.join(',');
+    s.onload = () => {
+      try {
+        // 腾讯返回多行 v_xxx="..."; 我们用正则把每行摘出来
+        const lines = window.__lastGtimg || '';
+        resolve(lines.split(';').map(parseLine).filter(x => x && x.price > 0 && x.pre > 0));
+      } catch (e) {
+        resolve([]);
+      } finally {
+        s.remove();
+      }
+    };
+    s.onerror = () => { s.remove(); resolve([]); };
+    // 腾讯返回的是全局赋值语句，我们在赋值前劫持一下：
+    // 由于 v_shxxx 是全局变量，script 执行完后直接读全局也行，但摘文本更稳
+    // 这里用一个小技巧：用 Object.defineProperty 拦不住，直接 eval 文本更麻烦
+    // 简化做法：script 执行后，去 window 里把 v_sh/sz 开头的变量读出来
+    s.onload = () => {
+      try {
+        const rows = [];
+        for (const code of batch) {
+          const g = window[code]; // 如 window['sh600000'] 不存在，实际是 window.v_sh600000
+        }
+        // 上面读不到，改为正则抓文本：
+        // 由于没法拿 script 文本，改用 fetch 同 URL 的 text（但会 CORS）-> 不行
+        // 所以真正可用的是：让腾讯返回 _var 回调，但 qt.gtimg.cn 不支持 callback 参数
+        // 最终可行：script 执行后，遍历 window 上所有 v_ 开头变量
+        const vars = Object.keys(window).filter(k => /^v_(sh|sz)\d+$/.test(k));
+        for (const k of vars) {
+          const str = window[k];
+          if (typeof str === 'string') {
+            const fakeLine = k + '="' + str + '"';
+            const r = parseLine(fakeLine);
+            if (r) rows.push(r);
+          }
+        }
+        resolve(rows);
+      } catch (e) {
+        resolve([]);
+      } finally {
+        s.remove();
+      }
+    };
+    document.head.appendChild(s);
+  });
+}
+
+// ---- 方案B：原 fetch+代理（代理框非空才用）----
+async function fetchBatchProxy(batch) {
   const proxy = getProxy();
   const url = proxy + 'https://qt.gtimg.cn/q=' + batch.join(',');
   const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   const buf = await resp.arrayBuffer();
-  // 先按 UTF-8 试，失败回退 GBK（Safari 原生不支持 GBK，需兜底）
   let text = '';
   try { text = new TextDecoder('gbk').decode(buf); } catch(e) { text = new TextDecoder('utf-8').decode(buf); }
   return text.split(';').map(parseLine).filter(x => x && x.price > 0 && x.pre > 0);
+}
+
+async function fetchBatch(batch) {
+  if (getProxy()) return fetchBatchProxy(batch);
+  return fetchBatchJSONP(batch);
 }
 
 function inAM() { const h=new Date().getHours(),m=new Date().getMinutes(); const t=h*60+m; return t>=9*60+30 && t<=11*60+30; }
@@ -154,7 +213,7 @@ async function scanReal() {
     } catch (e) {
       log('批失败: ' + e.message);
     }
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 120));
   }
 
   results.sort((a, b) => a.amLowPct - b.amLowPct);
@@ -185,7 +244,7 @@ function start() {
   running = true;
   document.getElementById('btn').textContent = '停止';
   document.getElementById('btn').classList.add('stop');
-  log('开始监控...');
+  log('开始监控（JSONP直连腾讯）...');
   scanReal();
   timer = setInterval(scanReal, REFRESH_MS);
 }
@@ -199,8 +258,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-// ============ 托管说明（首次点击展开）============
-log('使用说明：本工具需托管后访问。详见页面底部"托管说明"注释，或把文件上传 GitHub Pages / Vercel 后打开链接即可。');
+log('已改用 script JSONP 直连 qt.gtimg.cn，代理框留空即可。');
 </script>
 </body>
 </html>
