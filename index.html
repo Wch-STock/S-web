@@ -21,36 +21,30 @@
   .code { color:#8b949e; font-size:12px; }
   .red { color:#ff7b72; font-weight:bold; }
   .green { color:#3fb950; }
+  .gray { color:#8b949e; }
   .small { font-size:12px; color:#8b949e; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
   .empty { text-align:center; color:#8b949e; padding:30px; }
   .log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:8px; font-size:11px; color:#8b949e; max-height:130px; overflow:auto; margin-top:10px; font-family:monospace; line-height:1.5; }
-  input { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:8px; width:100%; font-size:13px; margin-top:6px; }
+  .section-title { font-size:13px; color:#f0883e; margin:12px 0 4px 0; padding-left:4px; }
 </style>
 </head>
 <body>
-<h2>📈 上午深跌 → 14:30 翻红</h2>
-<div class="sub">上午曾 ≤-4% 且上午拉升翻红 · 14:30 仍红盘<br>覆盖沪深主板 + 创业板（约1500只）</div>
+<h2>📈 上午深跌 → 翻红监控</h2>
+<div class="sub">上午曾 ≤-4% 且当前翻红<br>覆盖沪深主板 + 创业板</div>
 
 <div class="bar">
   <div class="stat">扫描<b id="cnt">0</b></div>
+  <div class="stat">观察<b id="obs">0</b></div>
   <div class="stat">命中<b id="hit">0</b></div>
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip" id="tip">
-  ✅ 已改用 &lt;script&gt; JSONP 直连腾讯接口，GitHub Pages 托管后无需 CORS 代理即可拉数据。代理框留空即可。
-</div>
+<div class="tip">✅ JSONP 直连腾讯，无需代理。11:30 后可看"午盘确认"，14:30 后可看"最终命中"。</div>
 
-<div class="sub" style="color:#58a6ff;">
-  CORS 代理（可选，仅当 JSONP 被网络拦截时填）：
-  <input id="proxy" placeholder="留空=JSONP直连，填则走代理" value="">
-</div>
-
-<div id="list"><div class="empty">暂无数据，点击"开始监控"</div></div>
+<div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
 
 <script>
-// ============ 配置 ============
 const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
@@ -74,177 +68,133 @@ function log(msg) {
   if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
 }
 
-// 解析一行 v_sh600000="1~名称~代码~..."
-function parseLine(line) {
-  if (!line) return null;
-  const idx = line.indexOf('="');
-  if (idx < 0) return null;
-  let raw = line.slice(idx + 2);
-  if (raw.endsWith('";')) raw = raw.slice(0, -2);
-  else if (raw.endsWith('"')) raw = raw.slice(0, -1);
-  const data = raw.split('~');
-  if (data.length < 36) return null;
-  return {
-    name: data[1],
-    price: parseFloat(data[3]),
-    pre: parseFloat(data[4]),
-    zdf: parseFloat(data[32]),
-    high: parseFloat(data[33]),
-    low: parseFloat(data[34]),
-  };
-}
-
-function getProxy() {
-  return document.getElementById('proxy').value.trim();
-}
-
-// ---- 方案A：JSONP script 注入（默认走这个）----
 function fetchBatchJSONP(batch) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
-    s.src = 'https://qt.gtimg.cn/q=' + batch.join(',');
-    s.onload = () => {
-      try {
-        // 腾讯返回多行 v_xxx="..."; 我们用正则把每行摘出来
-        const lines = window.__lastGtimg || '';
-        resolve(lines.split(';').map(parseLine).filter(x => x && x.price > 0 && x.pre > 0));
-      } catch (e) {
-        resolve([]);
-      } finally {
-        s.remove();
+    s.src = 'https://qt.gtimg.cn/q=' + batch.join(',') + '&_t=' + Date.now();
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      const rows = [];
+      for (const c of batch) {
+        const g = window['v_' + c];
+        if (!g || typeof g !== 'string') continue;
+        const d = g.split('~');
+        if (d.length < 35) continue;
+        rows.push({
+          code: c,
+          name: d[1],
+          price: parseFloat(d[3]),
+          pre: parseFloat(d[4]),
+          low: parseFloat(d[34]),
+          high: parseFloat(d[33]),
+        });
       }
+      s.remove();
+      resolve(rows);
     };
-    s.onerror = () => { s.remove(); resolve([]); };
-    // 腾讯返回的是全局赋值语句，我们在赋值前劫持一下：
-    // 由于 v_shxxx 是全局变量，script 执行完后直接读全局也行，但摘文本更稳
-    // 这里用一个小技巧：用 Object.defineProperty 拦不住，直接 eval 文本更麻烦
-    // 简化做法：script 执行后，去 window 里把 v_sh/sz 开头的变量读出来
-    s.onload = () => {
-      try {
-        const rows = [];
-        for (const code of batch) {
-          const g = window[code]; // 如 window['sh600000'] 不存在，实际是 window.v_sh600000
-        }
-        // 上面读不到，改为正则抓文本：
-        // 由于没法拿 script 文本，改用 fetch 同 URL 的 text（但会 CORS）-> 不行
-        // 所以真正可用的是：让腾讯返回 _var 回调，但 qt.gtimg.cn 不支持 callback 参数
-        // 最终可行：script 执行后，遍历 window 上所有 v_ 开头变量
-        const vars = Object.keys(window).filter(k => /^v_(sh|sz)\d+$/.test(k));
-        for (const k of vars) {
-          const str = window[k];
-          if (typeof str === 'string') {
-            const fakeLine = k + '="' + str + '"';
-            const r = parseLine(fakeLine);
-            if (r) rows.push(r);
-          }
-        }
-        resolve(rows);
-      } catch (e) {
-        resolve([]);
-      } finally {
-        s.remove();
-      }
-    };
+    s.onload = finish;
+    s.onerror = () => { finish(); };
+    setTimeout(finish, 5000);
     document.head.appendChild(s);
   });
 }
 
-// ---- 方案B：原 fetch+代理（代理框非空才用）----
-async function fetchBatchProxy(batch) {
-  const proxy = getProxy();
-  const url = proxy + 'https://qt.gtimg.cn/q=' + batch.join(',');
-  const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  const buf = await resp.arrayBuffer();
-  let text = '';
-  try { text = new TextDecoder('gbk').decode(buf); } catch(e) { text = new TextDecoder('utf-8').decode(buf); }
-  return text.split(';').map(parseLine).filter(x => x && x.price > 0 && x.pre > 0);
+function getMin() {
+  const h = new Date().getHours(), m = new Date().getMinutes();
+  return h * 60 + m;
 }
 
-async function fetchBatch(batch) {
-  if (getProxy()) return fetchBatchProxy(batch);
-  return fetchBatchJSONP(batch);
-}
-
-function inAM() { const h=new Date().getHours(),m=new Date().getMinutes(); const t=h*60+m; return t>=9*60+30 && t<=11*60+30; }
-function at1130() { const h=new Date().getHours(),m=new Date().getMinutes(); return h===11 && m>=30; }
-function at1430() { const h=new Date().getHours(),m=new Date().getMinutes(); return h===14 && m>=30; }
+const t = getMin();
+const isAM = t >= 9*60+30 && t <= 11*60+30;
+const isPM = t >= 13*60 && t <= 15*60;
 
 async function scanReal() {
   const codes = buildCodes();
   const chunks = [];
   for (let i = 0; i < codes.length; i += BATCH) chunks.push(codes.slice(i, i + BATCH));
 
-  const isAM = inAM();
   let count = 0;
-  const results = [];
+  const observing = [];
+  const hitList = [];
 
   for (const chunk of chunks) {
     if (!running) break;
     try {
-      const rows = await fetchBatch(chunk);
-      for (let k = 0; k < rows.length; k++) {
-        const r = rows[k];
+      const rows = await fetchBatchJSONP(chunk);
+      for (const r of rows) {
         if (!r || !r.pre || r.price <= 0) continue;
         count++;
-        const code = chunk[k] || '';
+        const code = r.code;
         const st = state[code] = state[code] || { name: r.name, pre: r.pre, amLow: null, p1130: null, p1430: null, hit: false };
         st.name = r.name; st.pre = r.pre;
         const pre = r.pre;
+
+        // 上午记录最低
         if (isAM) {
-          const curLow = r.low || r.price;
-          st.amLow = st.amLow == null ? curLow : Math.min(st.amLow, curLow);
+          st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
         }
-        if (at1130() && st.p1130 == null) st.p1130 = r.price;
-        if (at1430() && st.p1430 == null) st.p1430 = r.price;
-        if (st.amLow != null && st.p1130 != null && st.p1430 != null && !st.hit) {
-          if (st.amLow <= pre * (1 + DROP_PCT/100) && st.p1130 > pre && st.p1430 > pre) {
-            st.hit = true;
-          }
+        // 11:30 记录
+        if (t === 11*60+30 && st.p1130 == null) st.p1130 = r.price;
+        // 14:30 记录
+        if (t === 14*60+30 && st.p1430 == null) st.p1430 = r.price;
+
+        const amDropOk = st.amLow != null && st.amLow <= pre * (1 + DROP_PCT/100);
+        const nowRed = r.price > pre;
+        const p1130Red = st.p1130 != null && st.p1130 > pre;
+        const p1430Red = st.p1430 != null && st.p1430 > pre;
+
+        // 最终命中：上午深跌 + 11:30红 + 14:30红
+        if (amDropOk && p1130Red && p1430Red && !st.hit) {
+          st.hit = true;
         }
-        if (st.hit && !results.find(x => x.code === code)) {
-          results.push({
-            code, name: r.name,
-            amLowPct: +((st.amLow / pre - 1) * 100).toFixed(2),
-            p1130Pct: +((st.p1130 / pre - 1) * 100).toFixed(2),
-            p1430Pct: +((st.p1430 / pre - 1) * 100).toFixed(2),
-          });
+
+        if (st.hit) {
+          hitList.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), p1130Pct: +((st.p1130/pre-1)*100).toFixed(2), p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
+        } else if (amDropOk && nowRed) {
+          // 观察中：上午跌够了，当前红盘
+          observing.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), curPct: +((r.price/pre-1)*100).toFixed(2), p1130: st.p1130, p1430: st.p1430 });
         }
       }
     } catch (e) {
       log('批失败: ' + e.message);
     }
-    await new Promise(r => setTimeout(r, 120));
+    await new Promise(r => setTimeout(r, 80));
   }
 
-  results.sort((a, b) => a.amLowPct - b.amLowPct);
-  document.getElementById('cnt').textContent = count;
-  document.getElementById('hit').textContent = results.length;
-  render(results);
-  log('扫描完成，有效 ' + count + ' 只，命中 ' + results.length);
-}
+  observing.sort((a, b) => a.amLowPct - b.amLowPct);
+  hitList.sort((a, b) => a.amLowPct - b.amLowPct);
 
-function render(results) {
-  const el = document.getElementById('list');
-  if (!results.length) { el.innerHTML = '<div class="empty">暂无命中<br><small>需依次经历：上午下探 → 11:30翻红 → 14:30仍红</small></div>'; return; }
-  el.innerHTML = results.map(h => `
-    <div class="card">
-      <div class="row">
-        <div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div>
-        <div class="red">14:30 ${h.p1430Pct}%</div>
-      </div>
-      <div class="small">
-        <span>上午最低 <b class="red">${h.amLowPct}%</b></span>
-        <span>11:30 <b class="green">${h.p1130Pct}%</b></span>
-      </div>
-    </div>
-  `).join('');
+  document.getElementById('cnt').textContent = count;
+  document.getElementById('obs').textContent = observing.length;
+  document.getElementById('hit').textContent = hitList.length;
+
+  let html = '';
+  if (hitList.length) {
+    html += '<div class="section-title">🎯 最终命中（上午深跌+11:30红+14:30红）</div>';
+    html += hitList.map(h => `<div class="card">
+      <div class="row"><div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div><div class="red">${h.p1430Pct}%</div></div>
+      <div class="small"><span>最低 <b class="red">${h.amLowPct}%</b></span><span>11:30 <b class="green">${h.p1130Pct}%</b></span><span>14:30 <b class="green">${h.p1430Pct}%</b></span></div>
+    </div>`).join('');
+  }
+  if (observing.length) {
+    html += '<div class="section-title">👀 观察中（上午深跌+当前红盘）</div>';
+    html += observing.map(o => `<div class="card">
+      <div class="row"><div><span class="name">${o.name}</span> <span class="code">${o.code}</span></div><div class="green">当前 ${o.curPct}%</div></div>
+      <div class="small"><span>最低 <b class="red">${o.amLowPct}%</b></span><span>当前 <b class="green">${o.curPct}%</b></span></div>
+    </div>`).join('');
+  }
+  if (!html) html = '<div class="empty">暂无数据<br><small>上午还没出现"跌≥4%后翻红"的票</small></div>';
+
+  document.getElementById('list').innerHTML = html;
+  log('扫描完成，有效 ' + count + ' 只，观察 ' + observing.length + '，命中 ' + hitList.length);
 }
 
 function start() {
   running = true;
   document.getElementById('btn').textContent = '停止';
   document.getElementById('btn').classList.add('stop');
-  log('开始监控（JSONP直连腾讯）...');
+  log('开始监控...');
   scanReal();
   timer = setInterval(scanReal, REFRESH_MS);
 }
@@ -258,7 +208,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-log('已改用 script JSONP 直连 qt.gtimg.cn，代理框留空即可。');
+log('就绪。当前 ' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '，JSONP直连腾讯。');
 </script>
 </body>
 </html>
