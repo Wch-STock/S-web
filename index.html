@@ -19,10 +19,8 @@
   .row { display:flex; justify-content:space-between; align-items:center; }
   .name { font-size:16px; font-weight:bold; }
   .code { color:#8b949e; font-size:12px; }
-  /* 配色：绿=跌(负)，红=涨(正) */
-  .red { color:#ff7b72; font-weight:bold; }   /* 涨：红色 */
-  .green { color:#3fb950; font-weight:bold; } /* 跌：绿色 */
-  .gray { color:#8b949e; }
+  .red { color:#ff7b72; font-weight:bold; }
+  .green { color:#3fb950; font-weight:bold; }
   .small { font-size:12px; color:#8b949e; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
   .empty { text-align:center; color:#8b949e; padding:30px; }
   .log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:8px; font-size:11px; color:#8b949e; max-height:130px; overflow:auto; margin-top:10px; font-family:monospace; line-height:1.5; }
@@ -31,7 +29,7 @@
 </head>
 <body>
 <h2>📈 上午深跌 → 翻红监控</h2>
-<div class="sub">上午最低 ≤-4% 且午盘翻红 · 14:30 仍红盘<br>仅沪深主板（排除 创业板/科创板/北交所/ST）</div>
+<div class="sub">上午最低 ≤-4% 且上午曾翻红 · 14:30 仍红盘<br>仅沪深主板（排除 创业板/科创板/北交所/ST）</div>
 
 <div class="bar">
   <div class="stat">扫描<b id="cnt">0</b></div>
@@ -40,7 +38,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯。绿=跌 红=涨。已排除科创板(688)、创业板(300/301)、北交所(8xx)、ST。</div>
+<div class="tip">✅ JSONP 直连腾讯。"上午翻红"=上午盘中最高价曾&gt;昨收，无需恰好卡11:30。绿=跌 红=涨。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -50,17 +48,14 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
-// ===== 代码池：仅沪深主板，明确排除科创板(688)、创业板(300/301)、北交所(8xx) =====
 function buildCodes() {
   const codes = [];
-  // 沪市主板：600xxx、601xxx、603xxx（已自然避开 688 科创板；605xxx 多为新股/存托，按需可加）
   for (let i = 600000; i <= 600999; i++) codes.push('sh' + i);
   for (let i = 601000; i <= 601999; i++) codes.push('sh' + i);
   for (let i = 603000; i <= 603999; i++) codes.push('sh' + i);
-  // 深市主板：000xxx、001xxx、002xxx（排除 300/301 创业板）
-  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));      // 000xxx
-  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 001xxx
-  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 002xxx
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));
   return codes;
 }
 
@@ -73,13 +68,10 @@ function log(msg) {
   el.innerHTML = t + ' ' + msg + '<br>' + el.innerHTML;
   if (el.innerHTML.length > 3000) el.innerHTML = el.innerHTML.slice(0, 3000);
 }
-
 function getMin() { const h = new Date().getHours(), m = new Date().getMinutes(); return h * 60 + m; }
-
-// 数值格式化：涨(正)用红色，跌(负)用绿色，保留符号
 function fmtPct(v) {
   const n = parseFloat(v);
-  const cls = n >= 0 ? 'red' : 'green';   // 涨红跌绿
+  const cls = n >= 0 ? 'red' : 'green';
   const sign = n > 0 ? '+' : '';
   return '<b class="' + cls + '">' + sign + n.toFixed(2) + '%</b>';
 }
@@ -98,7 +90,7 @@ function fetchBatchJSONP(batch) {
         const d = g.split('~');
         if (d.length < 35) continue;
         const name = d[1] || '';
-        if (/ST/.test(name)) continue;        // 排除 ST / *ST
+        if (/ST/.test(name)) continue;
         const price = parseFloat(d[3]), pre = parseFloat(d[4]);
         if (!price || !pre) continue;
         rows.push({
@@ -106,7 +98,6 @@ function fetchBatchJSONP(batch) {
           price: price, pre: pre,
           low: parseFloat(d[34]) || price,
           high: parseFloat(d[33]) || price,
-          zdf: parseFloat(d[32]) || 0,
         });
       }
       s.remove();
@@ -126,8 +117,7 @@ async function scanReal() {
 
   const min = getMin();
   const isAM = min >= 9*60+30 && min <= 11*60+30;
-  const at1130 = min >= 11*60+25 && min <= 11*60+40;
-  const at1430 = min >= 14*60+25 && min <= 14*60+40;
+  const at1430 = min >= 14*60+20 && min <= 14*60+45;
 
   let count = 0;
   const observing = [];
@@ -140,35 +130,38 @@ async function scanReal() {
       for (const r of rows) {
         count++;
         const code = r.code;
-        const st = state[code] = state[code] || { amLow: null, p1130: null, p1430: null, hit: false };
+        const st = state[code] = state[code] || { amLow: null, amRed: false, p1430: null, hit: false };
         const pre = r.pre;
 
-        // 上午低点：实时跟踪；若上午没跑则用"当日最低价"兜底
+        // 上午：跟踪最低价 + 是否曾翻红（盘中最高价 > 昨收即算）
         if (isAM) {
           st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
+          if (r.high > pre) st.amRed = true;   // ★ 上午盘中曾翻红
         }
+        // 兜底：若上午没跑，用当日最低/最高推断（最低≤-4% 且 最高>昨收 视为上午深跌后翻红过）
         if (st.amLow == null && r.low > 0) st.amLow = r.low;
+        if (!st.amRed && r.high > pre && r.low <= pre * (1 + DROP_PCT/100)) st.amRed = true;
 
-        // 午盘价 / 14:30 价：时间窗内任意一次采样即记录
-        if (at1130 && st.p1130 == null) st.p1130 = r.price;
-        if (at1430 && st.p1430 == null) st.p1430 = r.price;
+        // 14:30 采样窗：持续更新（去掉 == null，避免漏采）
+        if (at1430) st.p1430 = r.price;
 
         const amDropOk = st.amLow != null && st.amLow <= pre * (1 + DROP_PCT/100);
         const nowRed   = r.price > pre;
-        const p1130Red = st.p1130 != null && st.p1130 > pre;
         const p1430Red = st.p1430 != null && st.p1430 > pre;
 
-        if (amDropOk && p1130Red && p1430Red && !st.hit) st.hit = true;
+        // ★ 命中条件：上午深跌 + 上午曾翻红 + 14:30仍红（不再卡11:30那一刻）
+        if (amDropOk && st.amRed && p1430Red && !st.hit) st.hit = true;
 
         if (st.hit) {
           hitList.push({ code, name: r.name,
             amLowPct: +((st.amLow/pre-1)*100).toFixed(2),
-            p1130Pct: +((st.p1130/pre-1)*100).toFixed(2),
-            p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
+            amHighPct: +((st.amRed ? 1 : 0)) ,  // 占位，下面用 curPct 展示
+            p1430Pct: st.p1430 != null ? +((st.p1430/pre-1)*100).toFixed(2) : null });
         } else if (amDropOk && nowRed) {
           observing.push({ code, name: r.name,
             amLowPct: +((st.amLow/pre-1)*100).toFixed(2),
-            curPct: +((r.price/pre-1)*100).toFixed(2) });
+            curPct: +((r.price/pre-1)*100).toFixed(2),
+            amRed: st.amRed });
         }
       }
     } catch (e) {
@@ -186,17 +179,17 @@ async function scanReal() {
 
   let html = '';
   if (hitList.length) {
-    html += '<div class="section-title">🎯 最终命中（上午深跌+11:30红+14:30红）</div>';
+    html += '<div class="section-title">🎯 最终命中（上午深跌+上午翻红+14:30红）</div>';
     html += hitList.map(h => `<div class="card">
-      <div class="row"><div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div><div class="red">${h.p1430Pct}%</div></div>
-      <div class="small"><span>最低 ${fmtPct(h.amLowPct)}</span><span>11:30 ${fmtPct(h.p1130Pct)}</span><span>14:30 ${fmtPct(h.p1430Pct)}</span></div>
+      <div class="row"><div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div><div class="red">${h.p1430Pct != null ? fmtPct(h.p1430Pct) : '-'}</div></div>
+      <div class="small"><span>最低 ${fmtPct(h.amLowPct)}</span><span>上午翻红 ✓</span>${h.p1430Pct != null ? '<span>14:30 '+fmtPct(h.p1430Pct)+'</span>' : ''}</div>
     </div>`).join('');
   }
   if (observing.length) {
     html += '<div class="section-title">👀 观察中（上午深跌+当前红盘）</div>';
     html += observing.map(o => `<div class="card">
-      <div class="row"><div><span class="name">${o.name}</span> <span class="code">${o.code}</span></div><div class="${o.curPct >= 0 ? 'red' : 'green'}">当前 ${o.curPct}%</div></div>
-      <div class="small"><span>最低 ${fmtPct(o.amLowPct)}</span><span>当前 ${fmtPct(o.curPct)}</span></div>
+      <div class="row"><div><span class="name">${o.name}</span> <span class="code">${o.code}</span></div><div class="${o.curPct >= 0 ? 'red' : 'green'}">当前 ${fmtPct(o.curPct)}</div></div>
+      <div class="small"><span>最低 ${fmtPct(o.amLowPct)}</span><span>当前 ${fmtPct(o.curPct)}</span><span>上午翻红 ${o.amRed ? '✓' : '✗'}</span></div>
     </div>`).join('');
   }
   if (!html) html = '<div class="empty">暂无数据<br><small>还没出现"上午跌≥4%后翻红"的票</small></div>';
@@ -214,8 +207,7 @@ function start() {
   timer = setInterval(scanReal, REFRESH_MS);
 }
 function stop() {
-  running = false;
-  clearInterval(timer);
+  running = false; clearInterval(timer);
   document.getElementById('btn').textContent = '开始监控';
   document.getElementById('btn').classList.remove('stop');
   log('已停止');
@@ -223,7 +215,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-log('就绪。仅沪深主板，绿=跌 红=涨。');
+log('就绪。规则：上午最低≤-4% + 上午盘中曾翻红 + 14:30仍红。绿=跌 红=涨。');
 </script>
 </body>
 </html>
