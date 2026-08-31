@@ -19,8 +19,10 @@
   .row { display:flex; justify-content:space-between; align-items:center; }
   .name { font-size:16px; font-weight:bold; }
   .code { color:#8b949e; font-size:12px; }
-  .red { color:#ff7b72; font-weight:bold; }
-  .green { color:#3fb950; }
+  /* 配色：绿=跌(负)，红=涨(正) */
+  .red { color:#ff7b72; font-weight:bold; }   /* 涨：红色 */
+  .green { color:#3fb950; font-weight:bold; } /* 跌：绿色 */
+  .gray { color:#8b949e; }
   .small { font-size:12px; color:#8b949e; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
   .empty { text-align:center; color:#8b949e; padding:30px; }
   .log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:8px; font-size:11px; color:#8b949e; max-height:130px; overflow:auto; margin-top:10px; font-family:monospace; line-height:1.5; }
@@ -38,7 +40,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯。用"当日最低价"兜底，不依赖从开盘一直开着；时间窗匹配，不再精确分钟。</div>
+<div class="tip">✅ JSONP 直连腾讯。绿=跌 红=涨。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -48,16 +50,12 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
-// ===== 代码池：沪深主板(60/000/001/002) + 创业板(300/301)，排除 688 科创、8xx 北交所 =====
 function buildCodes() {
   const codes = [];
-  // 沪市主板
   for (let i = 600000; i <= 603999; i++) codes.push('sh' + i);
-  // 深市主板
-  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));      // 000xxx
-  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 001xxx
-  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 002xxx
-  // 创业板
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));
   for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);
   return codes;
 }
@@ -74,7 +72,14 @@ function log(msg) {
 
 function getMin() { const h = new Date().getHours(), m = new Date().getMinutes(); return h * 60 + m; }
 
-// ===== JSONP 拉取，解析腾讯返回（d[1]名 d[3]价 d[4]昨收 d[32]涨跌幅 d[33]最高 d[34]最低）=====
+// 数值格式化：涨(正)用红色，跌(负)用绿色，保留符号
+function fmtPct(v) {
+  const n = parseFloat(v);
+  const cls = n >= 0 ? 'red' : 'green';   // 涨红跌绿
+  const sign = n > 0 ? '+' : '';
+  return '<b class="' + cls + '">' + sign + n.toFixed(2) + '%</b>';
+}
+
 function fetchBatchJSONP(batch) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
@@ -89,7 +94,7 @@ function fetchBatchJSONP(batch) {
         const d = g.split('~');
         if (d.length < 35) continue;
         const name = d[1] || '';
-        if (/ST/.test(name)) continue;            // 排除 ST / *ST
+        if (/ST/.test(name)) continue;
         const price = parseFloat(d[3]), pre = parseFloat(d[4]);
         if (!price || !pre) continue;
         rows.push({
@@ -117,7 +122,6 @@ async function scanReal() {
 
   const min = getMin();
   const isAM = min >= 9*60+30 && min <= 11*60+30;
-  // 时间窗区间匹配（不再 === 精确分钟，避免刷新错过）
   const at1130 = min >= 11*60+25 && min <= 11*60+40;
   const at1430 = min >= 14*60+25 && min <= 14*60+40;
 
@@ -135,13 +139,11 @@ async function scanReal() {
         const st = state[code] = state[code] || { amLow: null, p1130: null, p1430: null, hit: false };
         const pre = r.pre;
 
-        // ★ 上午低点：实时跟踪；若上午没跑则用"当日最低价"兜底
         if (isAM) {
           st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
         }
-        if (st.amLow == null && r.low > 0) st.amLow = r.low;   // 兜底：当日最低
+        if (st.amLow == null && r.low > 0) st.amLow = r.low;
 
-        // ★ 午盘价 / 14:30 价：时间窗内任意一次采样即记录
         if (at1130 && st.p1130 == null) st.p1130 = r.price;
         if (at1430 && st.p1430 == null) st.p1430 = r.price;
 
@@ -158,7 +160,6 @@ async function scanReal() {
             p1130Pct: +((st.p1130/pre-1)*100).toFixed(2),
             p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
         } else if (amDropOk && nowRed) {
-          // 观察中：上午跌够且当前红盘（不等 14:30 也能先显示）
           observing.push({ code, name: r.name,
             amLowPct: +((st.amLow/pre-1)*100).toFixed(2),
             curPct: +((r.price/pre-1)*100).toFixed(2) });
@@ -182,14 +183,14 @@ async function scanReal() {
     html += '<div class="section-title">🎯 最终命中（上午深跌+11:30红+14:30红）</div>';
     html += hitList.map(h => `<div class="card">
       <div class="row"><div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div><div class="red">${h.p1430Pct}%</div></div>
-      <div class="small"><span>最低 <b class="red">${h.amLowPct}%</b></span><span>11:30 <b class="green">${h.p1130Pct}%</b></span><span>14:30 <b class="green">${h.p1430Pct}%</b></span></div>
+      <div class="small"><span>最低 ${fmtPct(h.amLowPct)}</span><span>11:30 ${fmtPct(h.p1130Pct)}</span><span>14:30 ${fmtPct(h.p1430Pct)}</span></div>
     </div>`).join('');
   }
   if (observing.length) {
     html += '<div class="section-title">👀 观察中（上午深跌+当前红盘）</div>';
     html += observing.map(o => `<div class="card">
-      <div class="row"><div><span class="name">${o.name}</span> <span class="code">${o.code}</span></div><div class="green">当前 ${o.curPct}%</div></div>
-      <div class="small"><span>最低 <b class="red">${o.amLowPct}%</b></span><span>当前 <b class="green">${o.curPct}%</b></span></div>
+      <div class="row"><div><span class="name">${o.name}</span> <span class="code">${o.code}</span></div><div class="${o.curPct >= 0 ? 'red' : 'green'}">当前 ${o.curPct}%</div></div>
+      <div class="small"><span>最低 ${fmtPct(o.amLowPct)}</span><span>当前 ${fmtPct(o.curPct)}</span></div>
     </div>`).join('');
   }
   if (!html) html = '<div class="empty">暂无数据<br><small>还没出现"上午跌≥4%后翻红"的票</small></div>';
@@ -216,7 +217,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-log('就绪。天娱数科(sz002354) 测试：昨收7.85 / 最低7.42(-5.5%) / 当前8.04(+2.42%) → 应进入"观察中"。');
+log('就绪。绿=跌 红=涨。');
 </script>
 </body>
 </html>
