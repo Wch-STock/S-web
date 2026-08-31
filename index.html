@@ -2,171 +2,205 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>上午急跌拉升 · 14:30翻红 监控</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>上午深跌拉升监控</title>
 <style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#0a0a2e;color:#e0e0e0;padding:10px;font-size:14px}
-  h1{text-align:center;font-size:1.1em;color:#ffd700;margin-bottom:4px}
-  .sub{text-align:center;font-size:.75em;color:#888;margin-bottom:10px}
-  .bar{display:flex;gap:8px;margin-bottom:8px}
-  .bar button{flex:1;padding:10px;border:none;border-radius:8px;font-weight:700;font-size:.95em}
-  #start{background:#00c853;color:#000}
-  #stop{background:#ff1744;color:#fff}
-  #add{background:#2979ff;color:#fff;flex:.6}
-  .status{text-align:center;font-size:.8em;color:#aaa;margin-bottom:8px}
-  .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;margin-right:4px}
-  .status.on .dot{background:#00c853}
-  input{flex:1;min-width:80px;background:#1c1c3a;color:#fff;border:1px solid #333;border-radius:8px;padding:9px}
-  .card{background:#131336;border:1px solid #2a2a5a;border-radius:10px;padding:10px;margin:8px 0}
-  .name{font-size:1em;font-weight:700}
-  .code{color:#888;font-size:.8em}
-  .row{display:flex;justify-content:space-between;font-size:.85em;margin-top:3px}
-  .red{color:#ff3b30}
-  .green{color:#34c759}
-  .empty{text-align:center;color:#666;padding:20px;font-size:.85em}
-  .log{font-size:.7em;color:#666;margin-top:8px;max-height:90px;overflow:auto;white-space:pre-wrap}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:#0d1117; color:#e6edf3; font-family:-apple-system,"PingFang SC",sans-serif; padding:12px; padding-bottom:40px; }
+  h2 { text-align:center; font-size:17px; margin-bottom:4px; }
+  .sub { text-align:center; color:#8b949e; font-size:12px; margin-bottom:12px; line-height:1.5; }
+  .bar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+  .stat { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; flex:1; text-align:center; font-size:12px; }
+  .stat b { display:block; font-size:18px; color:#58a6ff; }
+  button { background:#238636; color:#fff; border:none; border-radius:8px; padding:10px 14px; font-size:14px; flex:1; }
+  button.stop { background:#30363d; }
+  .tip { text-align:center; color:#f0883e; font-size:12px; margin:8px 0; line-height:1.6; padding:8px; background:#161b22; border-radius:8px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:10px 12px; margin:8px 0; }
+  .row { display:flex; justify-content:space-between; align-items:center; }
+  .name { font-size:16px; font-weight:bold; }
+  .code { color:#8b949e; font-size:12px; }
+  .red { color:#ff7b72; font-weight:bold; }
+  .green { color:#3fb950; }
+  .small { font-size:12px; color:#8b949e; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
+  .empty { text-align:center; color:#8b949e; padding:30px; }
+  .log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:8px; font-size:11px; color:#8b949e; max-height:130px; overflow:auto; margin-top:10px; font-family:monospace; line-height:1.5; }
+  input { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:8px; width:100%; font-size:13px; margin-top:6px; }
 </style>
 </head>
 <body>
-<h1>📈 上午≤-4% → 上午翻红 → 14:30红</h1>
-<div class="sub">仅沪深主板 · 排除创业板/科创板/北交所/ST/ETF</div>
+<h2>📈 上午深跌 → 14:30 翻红</h2>
+<div class="sub">上午曾 ≤-4% 且上午拉升翻红 · 14:30 仍红盘<br>覆盖沪深主板 + 创业板（约1500只）</div>
 
 <div class="bar">
-  <button id="start">开始监控</button>
-  <button id="stop">停止</button>
+  <div class="stat">扫描<b id="cnt">0</b></div>
+  <div class="stat">命中<b id="hit">0</b></div>
+  <button id="btn">开始监控</button>
 </div>
-<div class="bar">
-  <input id="codes" placeholder="补加代码，逗号分隔，如 sh600519">
-  <button id="add">加入</button>
+
+<div class="tip" id="tip">
+  ⚠️ 若一直"批失败/0只"，是浏览器跨域限制。请按本页底部"托管说明"把本文件上传到 GitHub Pages 后访问，即可正常拉取行情。
 </div>
-<div class="status" id="status"><span class="dot"></span>未启动</div>
-<div id="list"><div class="empty">暂无命中，点"开始监控"后自动扫描</div></div>
+
+<div class="sub" style="color:#58a6ff;">
+  CORS 代理（可选，托管后仍报错时填）：
+  <input id="proxy" placeholder="如 https://corsproxy.io/?url=" value="">
+</div>
+
+<div id="list"><div class="empty">暂无数据，点击"开始监控"</div></div>
 <div class="log" id="log"></div>
 
 <script>
-/* ============ 1. 沪深主板代码池（内嵌，无需额外文件） ============ */
-function buildCodes(){
-  const list=[];
-  // 沪市主板：600xxx / 601xxx / 603xxx / 605xxx
-  const shRanges=[[600000,600999],[601000,601999],[603000,603999],[605000,605999]];
-  // 深市主板：000xxx / 001xxx / 002xxx / 003xxx
-  const szRanges=[[0,999],[1000,1999],[2000,2999],[3000,3999]];
-  shRanges.forEach(([a,b])=>{for(let c=a;c<=b;c++) list.push('sh'+String(c).padStart(6,'0'));});
-  szRanges.forEach(([a,b]=>{for(let c=a;c<=b;c++) list.push('sz'+String(c).padStart(6,'0'));}));
-  return list;
-}
-let WATCH = buildCodes();   // 约 4000 个候选，运行时自动剔除无效/ST/ETF
+// ============ 配置 ============
+const BATCH = 50;          // 每批代码数
+const REFRESH_MS = 30000;  // 刷新间隔 30 秒
+const DROP_PCT = -4;       // 上午下探阈值 %
 
-/* ============ 2. 排除规则（前端统一） ============ */
-const NAME_BAD = ['ST','ETF','LOF','可转债','转债','基金','指数','分级','联接','国债','申购','赎回','现金'];
-function isExcluded(code, name){
-  const c = code.replace(/^(sh|sz|bj)/,'');
-  // 前缀排除：创业板300/301、科创板688、北交所(bj 或 4/8/9开头)
-  if(/^(300|301|688)/.test(c)) return true;
-  if(/^[489]/.test(c)) return true;
-  // 名称排除：ST / ETF / 基金等
-  const n = (name||'').toUpperCase();
-  for(const k of NAME_BAD){ if(n.includes(k)) return true; }
-  return false;
+// 覆盖主要 A 股（沪深主板 + 创业板），按需可扩展科创/北交所
+function buildCodes() {
+  const codes = [];
+  for (let i = 600000; i <= 605000; i++) codes.push('sh' + i);      // 沪市主板
+  for (let i = 1; i <= 999; i++) codes.push('sh688' + String(i).padStart(3,'0')); // 科创板
+  for (let i = 1; i <= 2999; i++) codes.push('sz' + String(i).padStart(6,'0'));   // 深市/中小板
+  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);      // 创业板
+  return codes;
 }
 
-/* ============ 3. 状态与工具 ============ */
-const state={};      // code -> {name,pre,amLow,p1130,p1430}
-let timer=null;
-function log(t){const e=document.getElementById('log');e.textContent=(t+'\n'+e.textContent).slice(0,1500);}
-function nowHm(){const d=new Date();return d.getHours()*60+d.getMinutes();}
-function setStatus(txt, on){document.getElementById('status').className='status'+(on?' on':'');document.getElementById('status').innerHTML='<span class="dot"></span>'+txt;}
+const state = {};
+let running = false, timer = null;
 
-/* ============ 4. 腾讯行情 JSONP（无 CORS 问题） ============ */
-// 字段下标：f[1]名称 f[3]最新价 f[4]昨收 f[34]当日最低
-function fetchQuotes(codes){
-  return new Promise((resolve)=>{
-    const s=document.createElement('script');
-    s.src='https://qt.gtimg.cn/q='+codes.join(',')+'&_t='+Date.now();
-    let done=false;
-    const finish=()=>{ if(done) return; done=true; const out={};
-      codes.forEach(c=>{const v=window['v_'+c]; if(v){const f=v.split('~');
-        out[c]={name:f[1],price:parseFloat(f[3]),pre:parseFloat(f[4]),low:parseFloat(f[34]);};}});
-      s.remove(); resolve(out);
-    };
-    s.onload=finish;
-    s.onerror=()=>{log('批次拉取失败(网络拦截?)');finish();};
-    document.head.appendChild(s);
-    setTimeout(finish, 4000);   // 4秒超时兜底
-  });
+function log(msg) {
+  const el = document.getElementById('log');
+  const t = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  el.innerHTML = t + ' ' + msg + '<br>' + el.innerHTML;
+  if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
 }
 
-function ensureState(c, info){
-  const st=state[c]||{name:info.name,pre:info.pre,amLow:info.low,p1130:null,p1430:null};
-  if(nowHm()>=570 && nowHm()<=690){        // 9:30-11:30 追踪上午最低
-    if(!st.amLow || info.low<st.amLow) st.amLow=info.low;
-  }
-  state[c]=st;
+function parseLine(line) {
+  const idx = line.indexOf('="');
+  if (idx < 0) return null;
+  const data = line.slice(idx + 2, -2).split('~');
+  if (data.length < 36) return null;
+  return {
+    name: data[1],
+    price: parseFloat(data[3]),
+    pre: parseFloat(data[4]),
+    zdf: parseFloat(data[32]),
+    high: parseFloat(data[33]),
+    low: parseFloat(data[34]),
+  };
 }
 
-async function snapshot(){
-  const hm=nowHm();
-  // 分批扫描，每批 40 只
-  const BATCH=40, valid=[];
-  for(let i=0;i<WATCH.length;i+=BATCH){
-    const chunk=WATCH.slice(i,i+BATCH);
-    const d=await fetchQuotes(chunk);
-    for(const c in d){
-      const info=d[c];
-      if(!info.pre||!info.price){ continue; }   // 无效代码跳过
-      if(isExcluded(c, info.name)){ continue; } // 剔除 ST/ETF/创业板等
-      ensureState(c, info);
-      const st=state[c];
-      if(hm===690 && st.p1130===null) st.p1130=info.price;   // 锁 11:30 价
-      if(hm===870 && st.p1430===null) st.p1430=info.price;   // 锁 14:30 价
-      valid.push(c);
+function getProxy() {
+  const v = document.getElementById('proxy').value.trim();
+  return v ? (v.endsWith('=') || v.endsWith('/') ? v : v + '=') : '';
+}
+
+async function fetchBatch(batch) {
+  const proxy = getProxy();
+  const url = proxy + 'https://qt.gtimg.cn/q=' + batch.join(',');
+  const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  const buf = await resp.arrayBuffer();
+  // 先按 UTF-8 试，失败回退 GBK（Safari 原生不支持 GBK，需兜底）
+  let text = '';
+  try { text = new TextDecoder('gbk').decode(buf); } catch(e) { text = new TextDecoder('utf-8').decode(buf); }
+  return text.split(';').map(parseLine).filter(x => x && x.price > 0 && x.pre > 0);
+}
+
+function inAM() { const h=new Date().getHours(),m=new Date().getMinutes(); const t=h*60+m; return t>=9*60+30 && t<=11*60+30; }
+function at1130() { const h=new Date().getHours(),m=new Date().getMinutes(); return h===11 && m>=30; }
+function at1430() { const h=new Date().getHours(),m=new Date().getMinutes(); return h===14 && m>=30; }
+
+async function scanReal() {
+  const codes = buildCodes();
+  const chunks = [];
+  for (let i = 0; i < codes.length; i += BATCH) chunks.push(codes.slice(i, i + BATCH));
+
+  const isAM = inAM();
+  let count = 0;
+  const results = [];
+
+  for (const chunk of chunks) {
+    if (!running) break;
+    try {
+      const rows = await fetchBatch(chunk);
+      for (let k = 0; k < rows.length; k++) {
+        const r = rows[k];
+        if (!r || !r.pre || r.price <= 0) continue;
+        count++;
+        const code = chunk[k] || '';
+        const st = state[code] = state[code] || { name: r.name, pre: r.pre, amLow: null, p1130: null, p1430: null, hit: false };
+        st.name = r.name; st.pre = r.pre;
+        const pre = r.pre;
+        if (isAM) {
+          const curLow = r.low || r.price;
+          st.amLow = st.amLow == null ? curLow : Math.min(st.amLow, curLow);
+        }
+        if (at1130() && st.p1130 == null) st.p1130 = r.price;
+        if (at1430() && st.p1430 == null) st.p1430 = r.price;
+        if (st.amLow != null && st.p1130 != null && st.p1430 != null && !st.hit) {
+          if (st.amLow <= pre * (1 + DROP_PCT/100) && st.p1130 > pre && st.p1430 > pre) {
+            st.hit = true;
+          }
+        }
+        if (st.hit && !results.find(x => x.code === code)) {
+          results.push({
+            code, name: r.name,
+            amLowPct: +((st.amLow / pre - 1) * 100).toFixed(2),
+            p1130Pct: +((st.p1130 / pre - 1) * 100).toFixed(2),
+            p1430Pct: +((st.p1430 / pre - 1) * 100).toFixed(2),
+          });
+        }
+      }
+    } catch (e) {
+      log('批失败: ' + e.message);
     }
-    setStatus('扫描中… 已检 '+Math.min(i+BATCH,WATCH.length)+'/'+WATCH.length+' · 有效 '+valid.length);
+    await new Promise(r => setTimeout(r, 250));
   }
-  log('一轮完成，有效 '+valid.length+' 只');
-  render();
+
+  results.sort((a, b) => a.amLowPct - b.amLowPct);
+  document.getElementById('cnt').textContent = count;
+  document.getElementById('hit').textContent = results.length;
+  render(results);
+  log('扫描完成，有效 ' + count + ' 只，命中 ' + results.length);
 }
 
-/* ============ 5. 判定 + 渲染 ============ */
-function render(){
-  const box=document.getElementById('list');box.innerHTML='';
-  let hit=0;
-  for(const c in state){
-    const st=state[c]; if(!st.pre) continue;
-    const am=(st.amLow/st.pre-1)*100;
-    const p11=st.p1130?(st.p1130/st.pre-1)*100:null;
-    const p14=st.p1430?(st.p1430/st.pre-1)*100:null;
-    // 命中：上午曾≤-4% 且 11:30翻红 且 14:30红
-    if(st.amLow<=st.pre*0.96 && p11!==null && p11>0 && p14!==null && p14>0){
-      hit++; p14; // 引用避免压缩报警
-      const div=document.createElement('div');div.className='card';
-      div.innerHTML=`<div class="name">${st.name} <span class="code">${c}</span></div>
-        <div class="row"><span>上午最低</span><span class="red">${am.toFixed(2)}%</span></div>
-        <div class="row"><span>11:30</span><span class="${p11>0?'red':'green'}">${p11.toFixed(2)}%</span></div>
-        <div class="row"><span>14:30</span><span class="${p14>0?'red':'green'}">${p14.toFixed(2)}%</span></div>`;
-      box.appendChild(div);
-    }
-  }
-  if(!hit) box.innerHTML='<div class="empty">暂无命中</div>';
-  document.getElementById('status').lastChild.textContent+=' · 命中 '+hit;
+function render(results) {
+  const el = document.getElementById('list');
+  if (!results.length) { el.innerHTML = '<div class="empty">暂无命中<br><small>需依次经历：上午下探 → 11:30翻红 → 14:30仍红</small></div>'; return; }
+  el.innerHTML = results.map(h => `
+    <div class="card">
+      <div class="row">
+        <div><span class="name">${h.name}</span> <span class="code">${h.code}</span></div>
+        <div class="red">14:30 ${h.p1430Pct}%</div>
+      </div>
+      <div class="small">
+        <span>上午最低 <b class="red">${h.amLowPct}%</b></span>
+        <span>11:30 <b class="green">${h.p1130Pct}%</b></span>
+      </div>
+    </div>
+  `).join('');
 }
 
-/* ============ 6. 控制 ============ */
-document.getElementById('start').onclick=()=>{
-  if(timer) return;
-  log('开始监控（代码池 '+WATCH.length+' 只，运行时自动剔除无效/ST/ETF/创业板/科创板/北交所）');
-  snapshot();
-  timer=setInterval(snapshot, 120000);   // 每 2 分钟一轮
-  setStatus('监控中', true);
-};
-document.getElementById('stop').onclick=()=>{clearInterval(timer);timer=null;setStatus('已停止',false);log('已停止');};
-document.getElementById('add').onclick=()=>{
-  const v=document.getElementById('codes').value.trim();
-  if(v){const arr=v.split(',').map(x=>x.trim()).filter(Boolean);WATCH=WATCH.concat(arr);log('加入 '+arr.length+' 只，当前池 '+WATCH.length);}
-};
+function start() {
+  running = true;
+  document.getElementById('btn').textContent = '停止';
+  document.getElementById('btn').classList.add('stop');
+  log('开始监控...');
+  scanReal();
+  timer = setInterval(scanReal, REFRESH_MS);
+}
+function stop() {
+  running = false;
+  clearInterval(timer);
+  document.getElementById('btn').textContent = '开始监控';
+  document.getElementById('btn').classList.remove('stop');
+  log('已停止');
+}
+document.getElementById('btn').onclick = () => running ? stop() : start();
+window.onbeforeunload = () => clearInterval(timer);
 
-log('页面就绪。建议在 14:25 前保持页面活跃，14:30 自动锁价判定。');
+// ============ 托管说明（首次点击展开）============
+log('使用说明：本工具需托管后访问。详见页面底部"托管说明"注释，或把文件上传 GitHub Pages / Vercel 后打开链接即可。');
 </script>
 </body>
 </html>
