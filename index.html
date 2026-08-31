@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>上午深跌拉升监控</title>
+<title>上午深跌翻红监控</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background:#0d1117; color:#e6edf3; font-family:-apple-system,"PingFang SC",sans-serif; padding:12px; padding-bottom:40px; }
@@ -21,7 +21,6 @@
   .code { color:#8b949e; font-size:12px; }
   .red { color:#ff7b72; font-weight:bold; }
   .green { color:#3fb950; }
-  .gray { color:#8b949e; }
   .small { font-size:12px; color:#8b949e; margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
   .empty { text-align:center; color:#8b949e; padding:30px; }
   .log { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:8px; font-size:11px; color:#8b949e; max-height:130px; overflow:auto; margin-top:10px; font-family:monospace; line-height:1.5; }
@@ -30,7 +29,7 @@
 </head>
 <body>
 <h2>📈 上午深跌 → 翻红监控</h2>
-<div class="sub">上午曾 ≤-4% 且当前翻红<br>仅沪深主板（排除创业板/科创板/北交所/ST）</div>
+<div class="sub">上午最低 ≤-4% 且午盘翻红 · 14:30 仍红盘<br>沪深主板 + 创业板（排除 ST / 北交所）</div>
 
 <div class="bar">
   <div class="stat">扫描<b id="cnt">0</b></div>
@@ -39,7 +38,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯，无需代理。仅扫有效代码区间，约 4,500 只。</div>
+<div class="tip">✅ JSONP 直连腾讯。用"当日最低价"兜底，不依赖从开盘一直开着；时间窗匹配，不再精确分钟。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -49,18 +48,17 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
-// ============ 优化：只生成真实存在的代码区间 ============
+// ===== 代码池：沪深主板(60/000/001/002) + 创业板(300/301)，排除 688 科创、8xx 北交所 =====
 function buildCodes() {
   const codes = [];
-  // 沪市主板：600000–600999, 601000–601999, 603000–603999
-  // 这三段覆盖了 99% 的沪市主板股票
-  for (let i = 600000; i <= 600999; i++) codes.push('sh' + i);
-  for (let i = 601000; i <= 601999; i++) codes.push('sh' + i);
-  for (let i = 603000; i <= 603999; i++) codes.push('sh' + i);
-  // 深市主板：000001–000999
-  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));
-  // 深市中小板：002001–002999
-  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  // 沪市主板
+  for (let i = 600000; i <= 603999; i++) codes.push('sh' + i);
+  // 深市主板
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));      // 000xxx
+  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 001xxx
+  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 002xxx
+  // 创业板
+  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);
   return codes;
 }
 
@@ -71,9 +69,12 @@ function log(msg) {
   const el = document.getElementById('log');
   const t = new Date().toLocaleTimeString('zh-CN', {hour12:false});
   el.innerHTML = t + ' ' + msg + '<br>' + el.innerHTML;
-  if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
+  if (el.innerHTML.length > 3000) el.innerHTML = el.innerHTML.slice(0, 3000);
 }
 
+function getMin() { const h = new Date().getHours(), m = new Date().getMinutes(); return h * 60 + m; }
+
+// ===== JSONP 拉取，解析腾讯返回（d[1]名 d[3]价 d[4]昨收 d[32]涨跌幅 d[33]最高 d[34]最低）=====
 function fetchBatchJSONP(batch) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
@@ -88,14 +89,15 @@ function fetchBatchJSONP(batch) {
         const d = g.split('~');
         if (d.length < 35) continue;
         const name = d[1] || '';
-        if (/ST/.test(name)) continue;
+        if (/ST/.test(name)) continue;            // 排除 ST / *ST
+        const price = parseFloat(d[3]), pre = parseFloat(d[4]);
+        if (!price || !pre) continue;
         rows.push({
-          code: c,
-          name: name,
-          price: parseFloat(d[3]),
-          pre: parseFloat(d[4]),
-          low: parseFloat(d[34]),
-          high: parseFloat(d[33]),
+          code: c, name: name,
+          price: price, pre: pre,
+          low: parseFloat(d[34]) || price,
+          high: parseFloat(d[33]) || price,
+          zdf: parseFloat(d[32]) || 0,
         });
       }
       s.remove();
@@ -103,23 +105,21 @@ function fetchBatchJSONP(batch) {
     };
     s.onload = finish;
     s.onerror = () => { finish(); };
-    setTimeout(finish, 5000);
+    setTimeout(finish, 6000);
     document.head.appendChild(s);
   });
 }
-
-function getMin() {
-  const h = new Date().getHours(), m = new Date().getMinutes();
-  return h * 60 + m;
-}
-
-const t = getMin();
-const isAM = t >= 9*60+30 && t <= 11*60+30;
 
 async function scanReal() {
   const codes = buildCodes();
   const chunks = [];
   for (let i = 0; i < codes.length; i += BATCH) chunks.push(codes.slice(i, i + BATCH));
+
+  const min = getMin();
+  const isAM = min >= 9*60+30 && min <= 11*60+30;
+  // 时间窗区间匹配（不再 === 精确分钟，避免刷新错过）
+  const at1130 = min >= 11*60+25 && min <= 11*60+40;
+  const at1430 = min >= 14*60+25 && min <= 14*60+40;
 
   let count = 0;
   const observing = [];
@@ -130,38 +130,44 @@ async function scanReal() {
     try {
       const rows = await fetchBatchJSONP(chunk);
       for (const r of rows) {
-        if (!r || !r.pre || r.price <= 0) continue;
         count++;
         const code = r.code;
-        const st = state[code] = state[code] || { name: r.name, pre: r.pre, amLow: null, p1130: null, p1430: null, hit: false };
-        st.name = r.name; st.pre = r.pre;
+        const st = state[code] = state[code] || { amLow: null, p1130: null, p1430: null, hit: false };
         const pre = r.pre;
 
+        // ★ 上午低点：实时跟踪；若上午没跑则用"当日最低价"兜底
         if (isAM) {
           st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
         }
-        if (t === 11*60+30 && st.p1130 == null) st.p1130 = r.price;
-        if (t === 14*60+30 && st.p1430 == null) st.p1430 = r.price;
+        if (st.amLow == null && r.low > 0) st.amLow = r.low;   // 兜底：当日最低
+
+        // ★ 午盘价 / 14:30 价：时间窗内任意一次采样即记录
+        if (at1130 && st.p1130 == null) st.p1130 = r.price;
+        if (at1430 && st.p1430 == null) st.p1430 = r.price;
 
         const amDropOk = st.amLow != null && st.amLow <= pre * (1 + DROP_PCT/100);
-        const nowRed = r.price > pre;
+        const nowRed   = r.price > pre;
         const p1130Red = st.p1130 != null && st.p1130 > pre;
         const p1430Red = st.p1430 != null && st.p1430 > pre;
 
-        if (amDropOk && p1130Red && p1430Red && !st.hit) {
-          st.hit = true;
-        }
+        if (amDropOk && p1130Red && p1430Red && !st.hit) st.hit = true;
 
         if (st.hit) {
-          hitList.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), p1130Pct: +((st.p1130/pre-1)*100).toFixed(2), p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
+          hitList.push({ code, name: r.name,
+            amLowPct: +((st.amLow/pre-1)*100).toFixed(2),
+            p1130Pct: +((st.p1130/pre-1)*100).toFixed(2),
+            p1430Pct: +((st.p1430/pre-1)*100).toFixed(2) });
         } else if (amDropOk && nowRed) {
-          observing.push({ code, name: r.name, amLowPct: +((st.amLow/pre-1)*100).toFixed(2), curPct: +((r.price/pre-1)*100).toFixed(2), p1130: st.p1130, p1430: st.p1430 });
+          // 观察中：上午跌够且当前红盘（不等 14:30 也能先显示）
+          observing.push({ code, name: r.name,
+            amLowPct: +((st.amLow/pre-1)*100).toFixed(2),
+            curPct: +((r.price/pre-1)*100).toFixed(2) });
         }
       }
     } catch (e) {
       log('批失败: ' + e.message);
     }
-    await new Promise(r => setTimeout(r, 80));
+    await new Promise(r => setTimeout(r, 60));
   }
 
   observing.sort((a, b) => a.amLowPct - b.amLowPct);
@@ -186,7 +192,7 @@ async function scanReal() {
       <div class="small"><span>最低 <b class="red">${o.amLowPct}%</b></span><span>当前 <b class="green">${o.curPct}%</b></span></div>
     </div>`).join('');
   }
-  if (!html) html = '<div class="empty">暂无数据<br><small>上午还没出现"跌≥4%后翻红"的票</small></div>';
+  if (!html) html = '<div class="empty">暂无数据<br><small>还没出现"上午跌≥4%后翻红"的票</small></div>';
 
   document.getElementById('list').innerHTML = html;
   log('扫描完成，有效 ' + count + ' 只，观察 ' + observing.length + '，命中 ' + hitList.length);
@@ -210,7 +216,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-log('就绪。当前 ' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '，JSONP直连腾讯。');
+log('就绪。天娱数科(sz002354) 测试：昨收7.85 / 最低7.42(-5.5%) / 当前8.04(+2.42%) → 应进入"观察中"。');
 </script>
 </body>
 </html>
