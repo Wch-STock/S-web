@@ -31,7 +31,7 @@
 </head>
 <body>
 <h2>📈 上午深跌 → 翻红监控</h2>
-<div class="sub">上午最低 ≤-4% 且午盘翻红 · 14:30 仍红盘<br>沪深主板 + 创业板（排除 ST / 北交所）</div>
+<div class="sub">上午最低 ≤-4% 且午盘翻红 · 14:30 仍红盘<br>仅沪深主板（排除 创业板/科创板/北交所/ST）</div>
 
 <div class="bar">
   <div class="stat">扫描<b id="cnt">0</b></div>
@@ -40,7 +40,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯。绿=跌 红=涨。</div>
+<div class="tip">✅ JSONP 直连腾讯。绿=跌 红=涨。已排除科创板(688)、创业板(300/301)、北交所(8xx)、ST。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -50,13 +50,17 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
+// ===== 代码池：仅沪深主板，明确排除科创板(688)、创业板(300/301)、北交所(8xx) =====
 function buildCodes() {
   const codes = [];
-  for (let i = 600000; i <= 603999; i++) codes.push('sh' + i);
-  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));
-  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));
-  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));
-  for (let i = 300000; i <= 301500; i++) codes.push('sz' + i);
+  // 沪市主板：600xxx、601xxx、603xxx（已自然避开 688 科创板；605xxx 多为新股/存托，按需可加）
+  for (let i = 600000; i <= 600999; i++) codes.push('sh' + i);
+  for (let i = 601000; i <= 601999; i++) codes.push('sh' + i);
+  for (let i = 603000; i <= 603999; i++) codes.push('sh' + i);
+  // 深市主板：000xxx、001xxx、002xxx（排除 300/301 创业板）
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));      // 000xxx
+  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 001xxx
+  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));  // 002xxx
   return codes;
 }
 
@@ -94,7 +98,7 @@ function fetchBatchJSONP(batch) {
         const d = g.split('~');
         if (d.length < 35) continue;
         const name = d[1] || '';
-        if (/ST/.test(name)) continue;
+        if (/ST/.test(name)) continue;        // 排除 ST / *ST
         const price = parseFloat(d[3]), pre = parseFloat(d[4]);
         if (!price || !pre) continue;
         rows.push({
@@ -139,11 +143,13 @@ async function scanReal() {
         const st = state[code] = state[code] || { amLow: null, p1130: null, p1430: null, hit: false };
         const pre = r.pre;
 
+        // 上午低点：实时跟踪；若上午没跑则用"当日最低价"兜底
         if (isAM) {
           st.amLow = st.amLow == null ? r.low : Math.min(st.amLow, r.low);
         }
         if (st.amLow == null && r.low > 0) st.amLow = r.low;
 
+        // 午盘价 / 14:30 价：时间窗内任意一次采样即记录
         if (at1130 && st.p1130 == null) st.p1130 = r.price;
         if (at1430 && st.p1430 == null) st.p1430 = r.price;
 
@@ -217,7 +223,7 @@ function stop() {
 document.getElementById('btn').onclick = () => running ? stop() : start();
 window.onbeforeunload = () => clearInterval(timer);
 
-log('就绪。绿=跌 红=涨。');
+log('就绪。仅沪深主板，绿=跌 红=涨。');
 </script>
 </body>
 </html>
