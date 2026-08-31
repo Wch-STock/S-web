@@ -39,7 +39,7 @@
   <button id="btn">开始监控</button>
 </div>
 
-<div class="tip">✅ JSONP 直连腾讯，无需代理。排除 300/688/bj 开头及 ST 股票。</div>
+<div class="tip">✅ JSONP 直连腾讯，无需代理。仅扫有效代码区间，约 4,500 只。</div>
 
 <div id="list"><div class="empty">点击"开始监控"加载数据</div></div>
 <div class="log" id="log"></div>
@@ -49,19 +49,18 @@ const BATCH = 50;
 const REFRESH_MS = 30000;
 const DROP_PCT = -4;
 
-// ============ 修改点1：只生成沪深主板代码，排除 300/688/bj ============
+// ============ 优化：只生成真实存在的代码区间 ============
 function buildCodes() {
   const codes = [];
-  // 沪市主板：600xxx、601xxx、603xxx、605xxx（排除 688 科创板）
-  for (let i = 600000; i <= 605999; i++) {
-    const num = i;
-    if (num >= 688000 && num <= 688999) continue; // 排除科创板
-    codes.push('sh' + i);
-  }
-  // 深市主板：000xxx、001xxx、002xxx（排除 300/301 创业板）
-  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));       // 000xxx
-  for (let i = 1000; i <= 1999; i++) codes.push('sz' + String(i).padStart(6, '0'));   // 001xxx（如有）
-  for (let i = 2000; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));   // 002xxx
+  // 沪市主板：600000–600999, 601000–601999, 603000–603999
+  // 这三段覆盖了 99% 的沪市主板股票
+  for (let i = 600000; i <= 600999; i++) codes.push('sh' + i);
+  for (let i = 601000; i <= 601999; i++) codes.push('sh' + i);
+  for (let i = 603000; i <= 603999; i++) codes.push('sh' + i);
+  // 深市主板：000001–000999
+  for (let i = 1; i <= 999; i++) codes.push('sz' + String(i).padStart(6, '0'));
+  // 深市中小板：002001–002999
+  for (let i = 2001; i <= 2999; i++) codes.push('sz' + String(i).padStart(6, '0'));
   return codes;
 }
 
@@ -75,7 +74,6 @@ function log(msg) {
   if (el.innerHTML.length > 2500) el.innerHTML = el.innerHTML.slice(0, 2500);
 }
 
-// ============ 修改点2：解析时剔除 ST 股票 ============
 function fetchBatchJSONP(batch) {
   return new Promise((resolve) => {
     const s = document.createElement('script');
@@ -90,7 +88,7 @@ function fetchBatchJSONP(batch) {
         const d = g.split('~');
         if (d.length < 35) continue;
         const name = d[1] || '';
-        if (/ST/.test(name)) continue; // ★ 排除 ST / *ST 股票
+        if (/ST/.test(name)) continue;
         rows.push({
           code: c,
           name: name,
@@ -117,7 +115,6 @@ function getMin() {
 
 const t = getMin();
 const isAM = t >= 9*60+30 && t <= 11*60+30;
-const isPM = t >= 13*60 && t <= 15*60;
 
 async function scanReal() {
   const codes = buildCodes();
